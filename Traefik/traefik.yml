@@ -1,0 +1,51 @@
+## STATIC CONFIGURATION
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: web-sat
+
+log:
+  level: info
+  filePath: "/var/log/traefik.log"
+  format: json
+
+accessLog:
+  filePath: "/var/log/access_traefik.log"
+
+api:
+  dashboard: true
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: myresolver
+        domains:
+          - main: "sat-sipnat.online"
+            sans:
+              - "*.sat-sipnat.online"
+
+  mqtt:
+    address: ":1883"
+
+certificatesResolvers:
+  myresolver:
+    acme:
+      email: "wilmer.quintero@outlook.com"
+      storage: "/letsencrypt/acme.json"
+      caServer: "https://acme-staging-v02.api.letsencrypt.org/directory"
+      dnsChallenge:
+        provider: cloudflare
+        resolvers:
+          - "1.1.1.1:53"
+          - "8.8.8.8:53"

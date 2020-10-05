@@ -1,0 +1,68 @@
+version: "3.3"
+
+services:
+  traefik:
+    image: traefik:v2.3 # The official v2 Traefik docker image
+    container_name: traefik
+    environment:
+      - CLOUDFLARE_EMAIL=wilmer.quintero@outlook.com
+      - CLOUDFLARE_API_KEY=60742addb6681b10b096894ddc42d48f09202
+    restart: always
+    command:
+      - "--api=true"
+      - "--api.dashboard=true"
+
+      # Provider Docker
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=infraestructura-sat_web-sat"
+
+      #LOGS
+      - "--log=true"
+      - "--log.level=info"
+      - "--log.filePath=/var/log/traefik.log"
+      - "--log.format=json"
+
+      - "--accessLog=true"
+      - "--accessLog.filePath=/var/log/access_traefik.log"
+
+      #Entrypoints
+      - "--entrypoints.web.address=:80"
+
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.websecure.http.tls.domains[0].main=sat-sipnat.online"
+      - "--entrypoints.websecure.http.tls.domains[0].sans=*.sat-sipnat.online"
+
+      - "--entrypoints.mqtt.address=:1883"
+
+      # Redirect http to https
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+
+      - "--certificatesresolvers.myresolver.acme.email=wilmer.quintero@outlook.com"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.myresolver.acme.dnsChallenge=true"
+      - "--certificatesresolvers.myresolver.acme.dnschallenge.delaybeforecheck=0"
+      - "--certificatesresolvers.myresolver.acme.dnsChallenge.provider=cloudflare"
+      - "--certificatesresolvers.myresolver.acme.dnschallenge.resolvers[0]=1.1.1.1:53"
+      - "--certificatesresolvers.myresolver.acme.dnschallenge.resolvers[1]=8.8.8.8:53"
+    networks:
+      - web-sat
+    ports:
+      - 80:80
+      - 443:443
+      - 1883:1883
+      - 8080:8080
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./Traefik/Logs:/var/log/
+      - ./Traefik/letsencrypt:/letsencrypt
+    labels:
+      - traefik.enable=true
+      - traefik.port=8080
+      - traefik.http.routers.traefik.service=api@internal
+      - traefik.http.routers.traefik.rule=Host(`traefik.sat-sipnat.online`)
+      - traefik.http.routers.traefik.tls.certresolver=myresolver
+
+networks:
+  web-sat:
