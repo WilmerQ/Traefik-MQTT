@@ -4,9 +4,6 @@ services:
   traefik:
     image: traefik:v2.3 # The official v2 Traefik docker image
     container_name: traefik
-    environment:
-      - CLOUDFLARE_EMAIL=wilmer.quintero@outlook.com
-      - CLOUDFLARE_API_KEY=60742addb6681b10b096894ddc42d48f09202
     restart: always
     command:
       - "--api=true"
@@ -31,7 +28,7 @@ services:
 
       - "--entrypoints.websecure.address=:443"
       - "--entrypoints.websecure.http.tls.domains[0].main=sat-sipnat.online"
-      - "--entrypoints.websecure.http.tls.domains[0].sans=*.sat-sipnat.online"
+      - "--entrypoints.websecure.http.tls.domains[0].sans=traefik.sat-sipnat.online,whoami.sat-sipnat.online"
 
       - "--entrypoints.mqtt.address=:1883"
 
@@ -39,13 +36,13 @@ services:
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
 
+      # certificates resolvers
       - "--certificatesresolvers.myresolver.acme.email=wilmer.quintero@outlook.com"
       - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
-      - "--certificatesresolvers.myresolver.acme.dnsChallenge=true"
-      - "--certificatesresolvers.myresolver.acme.dnschallenge.delaybeforecheck=0"
-      - "--certificatesresolvers.myresolver.acme.dnsChallenge.provider=cloudflare"
-      - "--certificatesresolvers.myresolver.acme.dnschallenge.resolvers[0]=1.1.1.1:53"
-      - "--certificatesresolvers.myresolver.acme.dnschallenge.resolvers[1]=8.8.8.8:53"
+      - "--certificatesresolvers.myresolver.acme.httpchallenge=true"
+      - "--certificatesresolvers.myresolver.acme.httpchallenge.entrypoint=web"
+
+      - "--certificatesresolvers.myresolver.acme.dnschallenge=false"
     networks:
       - web-sat
     ports:
@@ -55,14 +52,51 @@ services:
       - 8080:8080
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./Traefik/Logs:/var/log/
-      - ./Traefik/letsencrypt:/letsencrypt
+      - ./traefik/logs:/var/log/
+      - ./traefik/letsencrypt:/letsencrypt
     labels:
       - traefik.enable=true
       - traefik.port=8080
       - traefik.http.routers.traefik.service=api@internal
       - traefik.http.routers.traefik.rule=Host(`traefik.sat-sipnat.online`)
       - traefik.http.routers.traefik.tls.certresolver=myresolver
+
+      - traefik.http.routers.traefik.middlewares=auth
+      - traefik.http.middlewares.auth.basicauth.users=test:$$apr1$$H6uskkkW$$IgXLP6ewTrSuBkTrqE8wj/
+
+  whoami:
+    image: "containous/whoami"
+    container_name: "whoami-service"
+    networks:
+      - web-sat
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whoami.rule=Host(`whoami.sat-sipnat.online`)"
+      - "traefik.http.routers.whoami.entrypoints=websecure"
+      - "traefik.http.routers.whoami.tls.certresolver=myresolver"
+
+  mosquitto:
+    image: eclipse-mosquitto
+    hostname: mosquitto
+    container_name: mosquitto
+    restart: always
+    # expose:
+    #   - "1883"
+    #   - "9001"
+    # ports:
+    #   - "1883:1883"
+    #   - "9001:9001"
+    networks:
+      - web-sat
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/logs:/mosquitto/log
+    labels:
+      - traefik.enable=true
+      - traefik.tcp.routers.mosquitto.rule=HostSNI(`*`)
+      - traefik.tcp.routers.mosquitto.entrypoints=mqtt
+      - traefik.tcp.services.mosquitto.loadbalancer.server.port=1883
 
 networks:
   web-sat:
