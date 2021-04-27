@@ -1,1 +1,6 @@
 *.log
+
+#ignore data mysql
+mysql/data/*
+
+.env

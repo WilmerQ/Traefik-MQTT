@@ -2,7 +2,7 @@ version: "3.3"
 
 services:
   traefik:
-    image: traefik:v2.3 # The official v2 Traefik docker image
+    image: traefik:v2.4.0
     container_name: traefik
     restart: always
     command:
@@ -30,6 +30,7 @@ services:
       - "--entrypoints.websecure.http.tls.domains[0].main=${DOMAIN}"
       - "--entrypoints.websecure.http.tls.domains[0].sans=*.${DOMAIN}"
 
+      #entryponts mqtt
       - "--entrypoints.mqtt.address=:1883"
 
       # Redirect http to https
@@ -64,39 +65,156 @@ services:
       - traefik.http.routers.traefik.middlewares=auth
       - traefik.http.middlewares.auth.basicauth.users=${USER_MIDDLEWARE}:${PASSWORD_MIDDLEWARE}
 
-  whoami:
-    image: "containous/whoami"
-    container_name: "whoami-service"
+  mysql:
+    image: mysql:5.7.31
+    hostname: mysql
+    container_name: mysql
+    restart: always
+    ports:
+      - 3306:3306
     networks:
+      - internal
       - web-sat
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+    volumes:
+      - ./mysql/init:/docker-entrypoint-initdb.d
+      - ./mysql/data:/var/lib/mysql
     labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.whoami.rule=Host(`whoami.${DOMAIN}`)"
-      - "traefik.http.routers.whoami.entrypoints=websecure"
-      - "traefik.http.routers.whoami.tls.certresolver=myresolver"
+      - traefik.enable=false
+
+  app-authenticate-mosquitto:
+    image: registry.gitlab.com/wilmerq/authentication-mosquitto:594c229d
+    hostname: app-authenticate-mosquitto
+    container_name: app-authenticate-mosquitto
+    restart: always
+    expose:
+      - "8089"
+    networks:
+      - internal
+    environment:
+      JDBC_URL: ${URL_JDBC_SIPNATV2}
+      DB_USER: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      MQTT_KEY_SECRET: ${MQTT_KEY_SECRET}
+    labels:
+      - "traefik.enable=false"
+    depends_on:
+      - mysql
 
   mosquitto:
-    image: eclipse-mosquitto
-    hostname: mosquitto
-    container_name: mosquitto
+    image: iegomez/mosquitto-go-auth:latest
+    hostname: mosquitto-go-auth
+    container_name: mosquitto-go-auth
     restart: always
-    # expose:
-    #   - "1883"
-    #   - "9001"
-    # ports:
-    #   - "1883:1883"
-    #   - "9001:9001"
     networks:
       - web-sat
+      - internal
     volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
       - ./mosquitto/data:/mosquitto/data
       - ./mosquitto/logs:/mosquitto/log
+      - ./mosquitto/conf:/etc/mosquitto
     labels:
       - traefik.enable=true
       - traefik.tcp.routers.mosquitto.rule=HostSNI(`*`)
       - traefik.tcp.routers.mosquitto.entrypoints=mqtt
       - traefik.tcp.services.mosquitto.loadbalancer.server.port=1883
+    depends_on:
+      - app-authenticate-mosquitto
+
+  backup-mysql-to-s3:
+    image: schickling/mysql-backup-s3
+    hostname: backup-mysql-s3
+    container_name: backup-mysql-s3
+    restart: always
+    networks:
+      - internal
+      - web-sat
+    environment:
+      S3_REGION: ${S3_REGION}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: ${S3_NAME_BUCKET}
+      S3_PREFIX: ${S3_PREFIX}
+      MYSQL_HOST: ${MYSQL_HOST}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      SCHEDULE: ${SCHEDULE}
+    labels:
+      - "traefik.enable=false"
+    depends_on:
+      - mysql
+
+  keycloak:
+    image: jboss/keycloak:12.0.2
+    hostname: keycloak
+    container_name: keycloak
+    restart: always
+    networks:
+      - internal
+    ports:
+      - 8081:8080
+    environment:
+      #KEYCLOAK_USER: ${KEYCLOAK_USER_ADMIN}
+      #KEYCLOAK_PASSWORD: ${KEYCLOAK_PASSWORD_ADMIN}
+      DB_VENDOR: ${DB_VENDOR}
+      DB_ADDR: ${MYSQL_HOST}
+      DB_DATABASE: ${DB_DATABASE}
+      DB_USER: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+    depends_on:
+      - mysql
+
+  app-springboot:
+    image: registry.gitlab.com/wilmerq/sipnatv2:d3b4bb5d
+    hostname: app-springboot
+    container_name: app-springboot
+    restart: always
+    networks:
+      - web-sat
+      - internal
+    environment:
+      JDBC_URL: ${URL_JDBC_SIPNATV2}
+      DB_USER: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+
+      KEYCLOAK_URL: ${KEYCLOAK_URL}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM}
+      KEYCLOAK_ROLE: ${KEYCLOAK_ROLE}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET}
+      KEYCLOAK_USER_ADMIN: ${KEYCLOAK_USER_ADMIN}
+      KEYCLOAK_PASSWORD_ADMIN: ${KEYCLOAK_PASSWORD_ADMIN}
+
+      MQTT_KEY_SECRET: ${MQTT_KEY_SECRET}
+      MQTT_SUPERUSER_USERNAME: ${MQTT_SUPERUSER_USERNAME}
+      MQTT_SUPERUSER_PASSWORD: ${MQTT_SUPERUSER_PASSWORD}
+      MQTT_SERVER_URL: ${MQTT_SERVER_URL}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sipnatv2.rule=Host(`api.${DOMAIN}`)"
+      - "traefik.http.routers.sipnatv2.entrypoints=websecure"
+      - "traefik.http.routers.sipnatv2.tls.certresolver=myresolver"
+      - "traefik.http.services.sipnatv2.loadbalancer.server.port=8082"
+    depends_on:
+      - mysql
+
+  Angular:
+    image: registry.gitlab.com/wilmerq/front-angular-sipnat:f07ba256
+    container_name: Angular
+    restart: always
+    networks:
+      - web-sat
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.angular.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.angular.entrypoints=websecure"
+      - "traefik.http.routers.angular.tls.certresolver=myresolver"
+      - "traefik.http.services.angular.loadbalancer.server.port=80"
 
 networks:
   web-sat:
+
+  internal:
+    external: false

@@ -10,5 +10,7 @@
 <div>
 <h1>Configuration DOCKER-COMPOSE + TRAEFIK + MOSQUITTO</h1>
 
-<p>Docker compose is configured, so that through mosquito it controls the traffic to a sub-domain, let's encript is added to manage the ssl certificates.</p>
+<p>
+Docker compose is configured, so that through mosquito it controls the traffic to a sub-domain, let's encript is added to manage the ssl certificates.
+</p>
 </div>
